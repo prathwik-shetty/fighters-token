@@ -1,0 +1,194 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TokenStatus {
+  AVAILABLE
+  HELD
+  BOOKED
+  PAID
+  FROZEN
+}
+
+enum BookingStatus {
+  PENDING_PAYMENT
+  PAID
+  CANCELLED
+  EXPIRED
+}
+
+model AdminUser {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  totpSecret   String?
+  totpEnabled  Boolean  @default(false)
+  role         String   @default("SUPER_ADMIN")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Sale {
+  id                         String    @id @default(uuid())
+  title                      String    @default("Fighters Token Sale")
+  description                String?   @default("Annual token booking sale for Fighters community")
+  totalTokens                Int       @default(80)
+  pricePerToken              Float     @default(1000)
+  currency                   String    @default("INR")
+  isLive                     Boolean   @default(true)
+  paymentsOpen               Boolean   @default(false)
+  paymentsOpenedAt           DateTime?
+  maxTokensPerMember         Int       @default(5)
+  holdDurationSeconds        Int       @default(180)
+  payByDeadlineDays          Int       @default(7)
+  autoAssignThresholdPercent Float     @default(10.0)
+  autoAssignKTokens          Int       @default(1)
+  autoAssignTargetName       String?
+  autoAssignExecuted         Boolean   @default(false)
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  tokens                     Token[]
+  bookings                   Booking[]
+  payments                   Payment[]
+}
+
+model Member {
+  id          String    @id @default(uuid())
+  phone       String    @unique
+  countryCode String    @default("+91")
+  name        String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  bookings    Booking[]
+  heldTokens  Token[]   @relation("HeldTokens")
+  bookedTokens Token[]  @relation("BookedTokens")
+}
+
+model Token {
+  id                String      @id @default(uuid())
+  tokenNumber       Int
+  saleId            String
+  status            TokenStatus @default(AVAILABLE)
+  isAdminAssigned   Boolean     @default(false)
+  adminAssignedName String?
+  heldByMemberId    String?
+  holdExpiresAt     DateTime?
+  bookedByMemberId  String?
+  bookedAt          DateTime?
+  bookingId         String?
+  version           Int         @default(0)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  sale              Sale        @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  heldByMember      Member?     @relation("HeldTokens", fields: [heldByMemberId], references: [id], onDelete: SetNull)
+  bookedByMember    Member?     @relation("BookedTokens", fields: [bookedByMemberId], references: [id], onDelete: SetNull)
+  booking           Booking?    @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@unique([saleId, tokenNumber])
+  @@index([saleId, status])
+  @@index([holdExpiresAt])
+}
+
+model Booking {
+  id                    String        @id @default(uuid())
+  saleId                String
+  memberId              String
+  memberName            String
+  memberPhone           String
+  tokenCount            Int
+  totalAmount           Float
+  status                BookingStatus @default(PENDING_PAYMENT)
+  payByDeadline         DateTime?
+  paymentWindowExpiresAt DateTime?
+  paymentGraceExtended  Boolean       @default(false)
+  paymentCheckoutActive Boolean       @default(false)
+  lastPaymentHeartbeat  DateTime?
+  razorpayOrderId       String?       @unique
+  razorpayPaymentId     String?
+  paidAt                DateTime?
+  cancelledAt           DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  sale                  Sale          @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  member                Member        @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  tokens                Token[]
+  payments              Payment[]
+  refunds               Refund[]
+
+  @@index([saleId, status])
+  @@index([memberId])
+  @@index([paymentWindowExpiresAt])
+}
+
+model Payment {
+  id                String    @id @default(uuid())
+  bookingId         String
+  saleId            String
+  memberId          String
+  amount            Float
+  currency          String    @default("INR")
+  razorpayOrderId   String
+  razorpayPaymentId String    @unique
+  razorpaySignature String?
+  status            String    @default("CAPTURED")
+  method            String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  booking           Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  sale              Sale      @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  refunds           Refund[]
+
+  @@index([saleId])
+  @@index([bookingId])
+}
+
+model Refund {
+  id               String   @id @default(uuid())
+  paymentId        String
+  bookingId        String
+  amount           Float
+  razorpayRefundId String?  @unique
+  status           String   @default("PROCESSED")
+  reason           String
+  initiatedBy      String   @default("ADMIN")
+  createdAt        DateTime @default(now())
+
+  payment          Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  booking          Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+  @@index([bookingId])
+}
+
+model AdminActionLog {
+  id        String   @id @default(uuid())
+  actor     String
+  action    String
+  details   String
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([action])
+  @@index([createdAt])
+}
+
+model OtpVerification {
+  id        String   @id @default(uuid())
+  phone     String
+  otp       String
+  expiresAt DateTime
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([phone])
+}
